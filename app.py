@@ -30,6 +30,41 @@ def get_secret(key: str, default=None):
         return os.getenv(key, default)
 
 # ----------------------------- DB Helpers -----------------------------
+
+# ----------------------------- Emergency Admin Reset -----------------------------
+def _admin_emergency_reset(username: str, password: str):
+    """Create or reset the admin user with the given credentials."""
+    conn = get_conn()
+    cur = conn.cursor()
+    hashed = bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt())
+
+    # Does user exist already?
+    cur.execute("SELECT id FROM users WHERE username=?", (username,))
+    row = cur.fetchone()
+    if row:
+        cur.execute(
+            "UPDATE users SET password_hash=?, role='admin', active=1 WHERE id=?",
+            (hashed, row["id"]),
+        )
+    else:
+        cur.execute(
+            """
+            INSERT INTO users(username, password_hash, full_name, email, role, active, created_at)
+            VALUES(?,?,?,?,?,?,?)
+            """,
+            (
+                username,
+                hashed,
+                "System Administrator",
+                "admin@chumcred.academy",
+                "admin",
+                1,
+                dt.datetime.utcnow().isoformat(),
+            ),
+        )
+    conn.commit()
+    conn.close()
+
 def get_conn():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -790,6 +825,15 @@ def privacy_compliance_ui():
 def main():
     run_ddl()
     ensure_seed()
+
+    # One-time forced admin reset from Secrets (optional)
+    if str(get_secret("FORCE_ADMIN_RESET", "")).lower() == "true":
+        _admin_emergency_reset(
+            str(get_secret("ADMIN_USERNAME", "admin")),
+            str(get_secret("ADMIN_PASSWORD", "Admin@123")),
+        )
+        st.info("✅ Admin credentials have been reset from Secrets. Turn off FORCE_ADMIN_RESET now.")
+
 
     st.title(APP_TITLE)
     st.caption("Training Organizer: **Chumcred Academy**")
